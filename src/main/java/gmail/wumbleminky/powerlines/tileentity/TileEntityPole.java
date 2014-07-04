@@ -63,8 +63,8 @@ public class TileEntityPole extends TileEntity {
 						updateNeighbors();
 						updateRedstoneOutput();
 					}
-				}	
-			}else {
+				}
+			}else if (!(pole1_coords != null && pole1_coords[4] > 0) && !(pole2_coords != null && pole2_coords[4] > 0)) {
 				// check for redstone signals
 				for (ForgeDirection d: ForgeDirection.VALID_DIRECTIONS){
 					if (worldObj.isBlockProvidingPowerTo(this.xCoord + d.offsetX, this.yCoord + d.offsetY, this.zCoord + d.offsetZ, d.ordinal()) > 0){
