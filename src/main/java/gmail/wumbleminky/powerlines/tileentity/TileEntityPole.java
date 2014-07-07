@@ -9,28 +9,31 @@ import net.minecraft.tileentity.TileEntity;
 import net.minecraftforge.common.util.ForgeDirection;
 
 public class TileEntityPole extends TileEntity {
+	
+	public static String ID = "tileEntityPole"; 
 
 	// NBT Fields
 	public String side;
-	public int[] base_coords;
-	public int[] pole1_coords;
-	public int[] pole2_coords;
+	private int[] base_coords;
+	private int[] pole1_coords;
+	private int[] pole2_coords;
 	
-	//other fields
-	public boolean needsUpdate;
-	public boolean stillUpdating;
-	private boolean _updateNeighbors;
-	public boolean pole1_change;
-	public boolean pole2_change;
+	//flags
+	public boolean needs_update;
+	private boolean _update_neighbors;
+	public boolean pole_change;
 	
-	public static String ID = "tileEntityPole"; 
+	public TileEntityPole base_pole;
+	public List<TileEntityPole> connected_poles;
+	
+	public int redstone_output; //the outputed redstone signal (to other poles)
+	public TileEntityPole redstone_input; //the pole that is sending me redstone
 	
 	public TileEntityPole(){
 		side = ForgeDirection.UNKNOWN.toString();
-		needsUpdate = true;
-		stillUpdating = false;
-		pole1_change = false;
-		pole2_change = false;
+		needs_update = true;
+		pole_change = false;
+		connected_poles = new ArrayList<TileEntityPole>();
 	}
 	
 	@Override
@@ -41,54 +44,67 @@ public class TileEntityPole extends TileEntity {
 	@Override
 	public void updateEntity(){
 		
-		if (base_coords == null){
-			base_coords = new int[3];
-			base_coords[0] = xCoord;
-			base_coords[1] = yCoord;
-			base_coords[2] = zCoord;
+		//one time updates
+		if (base_coords != null){
+			base_pole = getPoleAt(base_coords[0], base_coords[1], base_coords[2]);
+			base_coords = null;
 		}
 		
-		if (needsUpdate){
-			if (pole1_change || pole2_change){
-				updateNeighbors();
-				updateRedstoneOutput();
-				pole1_change = false;
-				pole2_change = false;
-			}else if (isReceivingRedstone()){
-				ForgeDirection d = getSide();
-				if (d != ForgeDirection.UNKNOWN){
-					if (worldObj.isBlockProvidingPowerTo(this.xCoord + d.offsetX, this.yCoord + d.offsetY, this.zCoord + d.offsetZ, d.ordinal()) == 0){
-						//Was emitting redstone, but now there is no signal
-						setSide(ForgeDirection.UNKNOWN);
-						updateNeighbors();
-						updateRedstoneOutput();
-					}
-				}
-			}else if (!(pole1_coords != null && pole1_coords[4] > 0) && !(pole2_coords != null && pole2_coords[4] > 0)) {
-				// check for redstone signals
-				for (ForgeDirection d: ForgeDirection.VALID_DIRECTIONS){
-					if (worldObj.isBlockProvidingPowerTo(this.xCoord + d.offsetX, this.yCoord + d.offsetY, this.zCoord + d.offsetZ, d.ordinal()) > 0){
-						setSide(d);
-						updateNeighbors();
-						updateRedstoneOutput();
-						break;
-					}
+		if (pole1_coords != null){
+			TileEntityPole te1 = getPoleAt(pole1_coords[0], pole1_coords[1], pole1_coords[2]);
+			setConnectedPole(te1);
+			pole1_coords = null;
+		}
+		
+		if (pole2_coords != null){
+			TileEntityPole te2 = getPoleAt(pole2_coords[0], pole2_coords[1], pole2_coords[2]);
+			setConnectedPole(te2);
+			pole2_coords = null;
+		}
+		
+		if (base_pole == null){
+			base_pole = this;
+		}
+		
+		//regular update
+		
+		if (pole_change){
+			updateNeighbors();
+			updateRedstoneOutput(getRedstoneOutput());
+			pole_change = false;
+		}else if (isReceivingRedstone() && needs_update){
+			ForgeDirection d = getSide();
+			if (d != ForgeDirection.UNKNOWN){
+				if (worldObj.isBlockProvidingPowerTo(this.xCoord + d.offsetX, this.yCoord + d.offsetY, this.zCoord + d.offsetZ, d.ordinal()) == 0){
+					//Was emitting redstone, but now there is no signal
+					setSide(ForgeDirection.UNKNOWN);
+					updateNeighbors();
+					updateRedstoneOutput(0);
 				}
 			}
-			
-			this.needsUpdate = false;
+			needs_update = false;
+		}else if (redstone_input == null && needs_update){
+			// check for redstone signals
+			for (ForgeDirection d: ForgeDirection.VALID_DIRECTIONS){
+				if (worldObj.isBlockProvidingPowerTo(this.xCoord + d.offsetX, this.yCoord + d.offsetY, this.zCoord + d.offsetZ, d.ordinal()) > 0){
+					setSide(d);
+					updateNeighbors();
+					updateRedstoneOutput(15);
+					break;
+				}
+			}
+			needs_update = false;
 		}
 		
-		if (_updateNeighbors){
+		
+		//update my neighbors
+		if (_update_neighbors){
 			Block b = worldObj.getBlock(this.xCoord, this.yCoord, this.zCoord);
 			for(ForgeDirection d: ForgeDirection.VALID_DIRECTIONS){
 				worldObj.notifyBlockOfNeighborChange(xCoord + d.offsetX, yCoord + d.offsetY, zCoord + d.offsetZ, b);
 				worldObj.notifyBlocksOfNeighborChange(xCoord + d.offsetX, yCoord + d.offsetY, zCoord + d.offsetZ, b);
 			}
-			_updateNeighbors = false;
-		}
-		if (stillUpdating){
-			stillUpdating = false;
+			_update_neighbors = false;
 		}
 	}
 	
@@ -96,38 +112,47 @@ public class TileEntityPole extends TileEntity {
 		return ForgeDirection.valueOf(side);
 	}
 	
+	public void setSide(String side){
+		this.side = side;
+	}
+	
+	public void setSide(ForgeDirection side){
+		setSide(side.toString());
+	}
+	
 	public boolean isReceivingRedstone(){
+		//Is the pole receiving a direct redstone signal.
 		if (!side.equalsIgnoreCase(ForgeDirection.UNKNOWN.toString())){
 			return true;
 		}
 		return false;
 	}
 	
+	
 	public boolean isConnectedReceiving(){
-		if (pole1_coords != null && pole1_coords[4] > 0){
-			return true;
-		}else if (pole2_coords != null && pole2_coords[4] > 0){
-			return true;
-		}
-		return false;
+		//Is the pole receiving redstone from a connected pole
+		return redstone_input != null;
+//		if (getPole1() != null && getPole1().redstone_output > 0){
+//			return true;
+//		}else if (getPole2() != null && getPole2().redstone_output > 0){
+//			return true;
+//		}
+//		return false;
 	}
 	
 	public int getRedstoneOutput(){
-		int ret_val = 0;
+		//the redstone signal I am outputing
 		if (isReceivingRedstone()){
-			ret_val = 15;
-		}else{ 
-			if (pole1_coords != null){
-				ret_val = Math.max(ret_val, pole1_coords[4]);
-			}
-			if (pole2_coords != null){
-				ret_val = Math.max(ret_val, pole2_coords[4]);
-			}
+			return 15;
+		}else if(redstone_input != null){
+			return redstone_input.redstone_output;
 		}
-		return ret_val;
+		return 0;
 	}
 	
 	public int getRedstoneOutput(int side){
+		//get the redstone output for the given side. Only really applicable if I am receiving
+		// a direct redstone signal
 		if (isReceivingRedstone()){
 			ForgeDirection f_side = ForgeDirection.getOrientation(side).getOpposite();
 			if (f_side != getSide()){
@@ -139,25 +164,17 @@ public class TileEntityPole extends TileEntity {
 		return getRedstoneOutput();
 	}
 	
-	public void updateRedstoneOutput(){
-		if (pole1_coords != null && pole1_coords[4] == 0 && !pole1_change){
-			getPole1().updateFromPole(this, getRedstoneOutput());
-		}
-		if (pole2_coords != null && pole2_coords[4] == 0 && !pole2_change){
-			getPole2().updateFromPole(this, getRedstoneOutput());
-		}
-	}
-	
-	public void updateFromPole(TileEntityPole pole, int value){
-		if (getPole1() == pole && pole1_coords[4] != value){
-			pole1_coords[4] = value;
-			pole1_change = true;
-			updateNeighbors();
-		}
-		if (getPole2() == pole && pole2_coords[4] != value){
-			pole2_coords[4] = value;
-			pole2_change = true;
-			updateNeighbors();
+	public void updateRedstoneOutput(int output){
+		//update my outputing redstone, then update my connected poles
+		redstone_output = output;
+		for (TileEntityPole p: connected_poles){
+			if (p != redstone_input && p.redstone_input == null && redstone_output > 0){
+					p.redstone_input = this;
+					p.pole_change = true;
+			}else if(p.redstone_input == this && redstone_output == 0){
+					p.redstone_input = null;
+					p.pole_change = true;
+			}
 		}
 	}
 	
@@ -165,57 +182,41 @@ public class TileEntityPole extends TileEntity {
 		return getEntirePole().contains(segment);
 	}
 	
-//	public void updateConnectedRedstoneOutput(TileEntityPole pole, int redstone){
-//		if (getPole1() == pole){
-//			pole1_coords[4] = redstone;
-//			updateNeighbors();
-//		}
-//		if (getPole2() == pole){
-//			pole2_coords[4] = redstone;
-//			updateNeighbors();
-//		}
-//	}
-	
-	public void setSide(ForgeDirection side){
-		setSide(side.toString());
-	}
-	
-	public void setSide(String side){
-		this.side = side;
-	}
-	
 	private void updateNeighbors(){
-		_updateNeighbors = true;
+		_update_neighbors = true;
 	}
 	
 	public List<TileEntityPole> getEntirePole(){
+		//get a list of the entire pole (myself and all the other TileEntityPole's directly above and/or below).
 		List<TileEntityPole> pole = new ArrayList<TileEntityPole>();
 		TileEntityPole current = getBase();
 		while (current != null){
 			pole.add(current);
-			current = (TileEntityPole) worldObj.getTileEntity(current.xCoord, current.yCoord + 1, current.zCoord);
+			current = getPoleAt(current.xCoord, current.yCoord + 1, current.zCoord);
 		}
 		return pole;
 	}
 	
 	public void updatePole(){
+		//find the base pole, then update all poles.
 		TileEntityPole te_base = findBasePole();
 		te_base.updatePoleBase(te_base);
 	}
 	
 	public void updatePoleBase(TileEntityPole new_base){
-		
-		if (new_base.base_coords != this.base_coords){
+		//update the pole with a new base pole. then update the base of a TileEntityPole above (if found)
+		if (new_base != base_pole){
 			setBase(new_base);
 		}
-		TileEntityPole te = (TileEntityPole) worldObj.getTileEntity(this.xCoord, this.yCoord + 1, this.zCoord);
+		TileEntityPole te = getPoleAt(xCoord, yCoord + 1, zCoord);
 		if (te != null) {
 			te.updatePoleBase(new_base);
 		}
 	}
 	
 	public TileEntityPole findBasePole(){
-		TileEntityPole te = (TileEntityPole) worldObj.getTileEntity(this.xCoord, this.yCoord - 1, this.zCoord);
+		//search for the lowest TileEntityPole in the pole.
+		TileEntityPole te = getPoleAt(xCoord, yCoord - 1, zCoord);
 		if (te != null){
 			return te.findBasePole();
 		}
@@ -223,141 +224,78 @@ public class TileEntityPole extends TileEntity {
 	}
 	
 	public TileEntityPole getBase(){
-		return getPoleAt(base_coords);
+		return base_pole;
+	}
+	
+	public boolean hasPole1(){
+		return getPole1() != null;
+	}
+	
+	public boolean hasPole2(){
+		return getPole2() != null;
 	}
 	
 	public TileEntityPole getPole1(){
-		if (pole1_coords != null){
-			return getPoleAt(pole1_coords);
+		if (!connected_poles.isEmpty()){
+			return connected_poles.get(0);
 		}
 		return null;
 	}
 	
 	public TileEntityPole getPole2(){
-		if (pole2_coords != null){
-			return getPoleAt(pole2_coords);
+		if (connected_poles.size() > 1){
+			return connected_poles.get(1);
 		}
 		return null;
 	}
 	
-	private TileEntityPole getPoleAt(int[] coords){
-		return (TileEntityPole) worldObj.getTileEntity(coords[0], coords[1], coords[2]);
-	}
-	
-	public List<TileEntityPole> getAllConnectedPoles(){
-		List<TileEntityPole> all_connected_poles = new ArrayList<TileEntityPole>();
-		TileEntityPole current = getBase();
-		while (current != null){
-			if (current.pole1_coords != null){
-				all_connected_poles.add(current.getPole1());
-			}
-			if (current.pole2_coords != null){
-				all_connected_poles.add(current.getPole2());
-			}
-			current = (TileEntityPole)worldObj.getTileEntity(current.xCoord, current.yCoord + 1, current.zCoord);
-		}
-		return all_connected_poles;
+	private TileEntityPole getPoleAt(int x, int y, int z){
+		return (TileEntityPole) worldObj.getTileEntity(x, y, z);
 	}
 	
 	public boolean isConnected(){
-		if (pole1_coords != null || pole2_coords != null){
-			return true;
-		}
-		return false;
+		return !connected_poles.isEmpty();
 	}
 	
 	public void connectPoles(TileEntityPole other_pole_te){
+		//connects the two poles together
 		setConnectedPole(other_pole_te);
 		other_pole_te.setConnectedPole(this);
 	}
 	
 	public void setConnectedPole(TileEntityPole connected_te){
-		
-		if (pole1_coords != null && pole2_coords != null){
-			if (pole2_coords[3] < pole1_coords[3]){
-				pole2_coords = null;
-				pole1_coords[3] = 0;
-			}else{
-				pole1_coords = null;
-				pole2_coords[3] = 0;
-			}
+		// adds the give TileEntityPole to the connected_poles. removes the first pole if there are already 2 connections.
+		if (connected_poles.size() >= 2){
+			connected_poles.remove(0);
 		}
-		
-		if (pole1_coords == null){
-			pole1_coords = new int[5];
-			pole1_coords[0] = connected_te.xCoord;
-			pole1_coords[1] = connected_te.yCoord;
-			pole1_coords[2] = connected_te.zCoord;
-			if (pole2_coords == null){
-				pole1_coords[3] = 0;
-			}else{
-				pole1_coords[3] = 1;
-			}
-			pole1_coords[4] = connected_te.getRedstoneOutput();
-		}else if (pole2_coords == null){
-			pole2_coords = new int[5];
-			pole2_coords[0] = connected_te.xCoord;
-			pole2_coords[1] = connected_te.yCoord;
-			pole2_coords[2] = connected_te.zCoord;
-			if (pole1_coords == null){
-				pole2_coords[3] = 0;
-			}else{
-				pole2_coords[3] = 1;
-			}
-			pole2_coords[4] = connected_te.getRedstoneOutput();
-		}
+		connected_poles.add(connected_te);
 	}
 	
 	public void removeConnectedPole(TileEntityPole te){
-		if (pole1_coords != null && getPole1().equals(te)){
-			pole1_coords = null;
-		}
-		if (pole2_coords != null && getPole2().equals(te)){
-			pole2_coords = null;
-		}
+		connected_poles.remove(te);
 	}
 	
 	public boolean isBase(){
-		return this.xCoord == base_coords[0] && this.yCoord == base_coords[1] && this.zCoord == base_coords[2]; 
+		return this == base_pole; 
 	}
 	
 	public boolean hasSameBasePole(TileEntityPole base){
-		
-		for (int i = 0; i < 3; i++){
-			if (base.base_coords[i] != this.base_coords[i]){
-				return false;
-			}
-		}
-		return true;
+		return base == base_pole;
 	}
 	
 	public void setBase(TileEntityPole te){
-		setBase(te.xCoord, te.yCoord, te.zCoord);
-	}
-	
-	public void setBase(int x, int y, int z){
-		System.out.println("update base: " + x + "," + y + "," + z);
-		if (base_coords == null){
-			base_coords = new int[6];
-		}
-		base_coords[0] = x;
-		base_coords[1] = y;
-		base_coords[2] = z;
+		base_pole = te;
 	}
 	
 	public void blockBroken(){
-		TileEntityPole pole1 = getPole1();
-		TileEntityPole pole2 = getPole2();
-		if (pole1 != null){
-			pole1.removeConnectedPole(this);
-//			pole1.getNetwork().needsUpdate = true;
+		//remove myself from my connected poles.
+		if (hasPole1()){
+			getPole1().removeConnectedPole(this);
 		}
-		if (pole2 != null){
-			pole2.removeConnectedPole(this);
-//			pole2.getNetwork().needsUpdate = true;
+		if (hasPole2()){
+			getPole2().removeConnectedPole(this);
 		}
 		updatePole();
-//		getNetwork().needsUpdate = true;
 	}
 	
 	//**************** NBT Methods
@@ -368,11 +306,25 @@ public class TileEntityPole extends TileEntity {
     {
         super.writeToNBT(nbt);
         nbt.setString("side", side);
+        int[] base_coords = new int[3];
+        base_coords[0] = base_pole.xCoord;
+        base_coords[1] = base_pole.yCoord;
+        base_coords[2] = base_pole.zCoord;
         nbt.setIntArray("base_coords", base_coords);
-        if (pole1_coords != null){
+        
+        //save the pole coordinates if there is a pole1 and pole2
+        if (hasPole1()){
+        	int[] pole1_coords = new int[3];
+        	pole1_coords[0] = getPole1().xCoord;
+        	pole1_coords[1] = getPole1().yCoord;
+        	pole1_coords[2] = getPole1().zCoord;
         	nbt.setIntArray("pole1_coords", pole1_coords);
         }
-        if (pole2_coords != null){
+        if (hasPole2()){
+        	int[] pole2_coords = new int[3];
+        	pole2_coords[0] = getPole2().xCoord;
+        	pole2_coords[1] = getPole2().yCoord;
+        	pole2_coords[2] = getPole2().zCoord;
         	nbt.setIntArray("pole2_coords", pole2_coords);
         }
     }
@@ -382,12 +334,12 @@ public class TileEntityPole extends TileEntity {
     {
         super.readFromNBT(nbt);
         this.side = nbt.getString("side");
-        this.base_coords = nbt.getIntArray("base_coords");
+        base_coords = nbt.getIntArray("base_coords"); 
         if (nbt.hasKey("pole1_coords")){
-        	this.pole1_coords = nbt.getIntArray("pole1_coords");
+        	pole1_coords = nbt.getIntArray("pole1_coords");
         }
         if (nbt.hasKey("pole2_coords")){
-        	this.pole2_coords = nbt.getIntArray("pole2_coords");
+        	pole2_coords = nbt.getIntArray("pole2_coords");
         }
     }
 }

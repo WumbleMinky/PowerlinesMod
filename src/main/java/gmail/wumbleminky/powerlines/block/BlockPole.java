@@ -54,7 +54,7 @@ public class BlockPole extends BlockContainer {
 			return;
 		}
 		
-		te.setBase(x,y,z);  //give the TE it's initial coords
+		te.setBase(te);  //give the TE it's initial coords
 		
 		//THis could be more efficient
 		if (te_up != null && te_down == null){
@@ -78,22 +78,24 @@ public class BlockPole extends BlockContainer {
 	public boolean onBlockActivated(World world, int x, int y, int z, EntityPlayer player, int par1, float par2, float par3, float par4){
 		TileEntityPole te = (TileEntityPole) world.getTileEntity(x, y, z);
 		if (te != null){
-			if (te.base_coords != null){
+			if (te.base_pole != null){
 				if (!world.isRemote){
-					String strBase = te.base_coords[0] + "," + te.base_coords[1] + "," + te.base_coords[2];
+					String strBase = te.base_pole.xCoord + "," + te.base_pole.yCoord + "," + te.base_pole.zCoord;
 					boolean base = te.isBase();
 					System.out.println("------------");
+					System.out.println(te);
 					if (!base){
 						System.out.println("Base: " + strBase);
 					}else{
 						System.out.println("Base (Me): " + strBase);
 					}
 					System.out.println("Side: " + te.side);
-					if (te.pole1_coords!= null){
-						System.out.println("Pole1: " + te.pole1_coords[0] + "," + te.pole1_coords[1] + "," + te.pole1_coords[2] + " = " + te.pole1_coords[4]);
+					System.out.println("Redstone Input:" + te.redstone_input);
+					if (te.getPole1() != null){
+						System.out.println("Pole1: " + te.getPole1().xCoord + "," + te.getPole1().yCoord + "," + te.getPole1().zCoord + " = " + te.getPole1().redstone_output);
 					}
-					if (te.pole2_coords!= null){
-						System.out.println("Pole2: " + te.pole2_coords[0] + "," + te.pole2_coords[1] + "," + te.pole2_coords[2] + " = " + te.pole2_coords[4]);
+					if (te.getPole2()!= null){
+						System.out.println("Pole2: " + te.getPole2().xCoord + "," + te.getPole2().yCoord + "," + te.getPole2().zCoord + " = " + te.getPole2().redstone_output);
 					}
 				}
 			}
@@ -105,7 +107,7 @@ public class BlockPole extends BlockContainer {
 	public void onNeighborBlockChange(World world, int x, int y, int z, Block block){
 		TileEntityPole te = (TileEntityPole) world.getTileEntity(x, y, z);
 		if (te != null){
-			te.needsUpdate = true;
+			te.needs_update = true;
 		}
 	}
 	
